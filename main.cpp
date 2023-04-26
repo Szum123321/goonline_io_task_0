@@ -14,8 +14,8 @@ inline float mod(float val, int m){
     return val;
 }
 
-const std::regex COLOR_DEC("^([0-9]{1,3},){3}([0-9]{1,3})$");
-const std::regex COLOR_HEX("^([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$");
+const regex COLOR_DEC("^([0-9]{1,3},){3}([0-9]{1,3})$");
+const regex COLOR_HEX("^([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$");
 
 enum Modes {
     MIX,
@@ -25,12 +25,7 @@ enum Modes {
 };
 
 struct Color;
-
-struct ColorHSL {
-    float hue = 0, sat = 0, light = 0, alpha = 1;
-    ColorHSL() = default;
-    ColorHSL(const Color &color);
-};
+struct ColorHSL;
 
 struct Color {
     uint8_t alpha = 0xFF, blue = 0, green = 0, red = 0;
@@ -38,17 +33,23 @@ struct Color {
     Color() = default;
     Color(uint32_t r, uint32_t g, uint32_t b, uint32_t a = 255): red(r), green(g), blue(b), alpha(a) {};
     Color(const ColorHSL &hsl);
-} __attribute__((packed)); //allow for bit magick
+} __attribute__((packed)); //allow for bit magic
+
+struct ColorHSL {
+    float hue = 0, sat = 0, light = 0, alpha = 1;
+    ColorHSL() = default;
+    ColorHSL(const Color &color);
+};
 
 ColorHSL::ColorHSL(const Color &color) {
-    //Standard RGB -> HSL conversion procedure (consult wikipedia)
+    //Standard RGB -> HSL conversion procedure
     alpha = color.alpha / 255.0f;
 
     float R = color.red / 255.0f, G = color.green / 255.0f, B = color.blue / 255.0f;
     float M = max({R, G, B}), m = min({R, G, B});
     float c = (float)M - m;
 
-    if(c != 0)  {
+    if(c != 0) {
         if(M == R) hue = 60.0f * mod((G - B) / c, 6);
         else if(M == G) hue = 120 + 60.0f * (B - R) / c;
         else if(M == B) hue = 240 + 60.0f * (R - G) / c;
@@ -101,11 +102,11 @@ Color::Color(const ColorHSL &hsl) {
 /**
  * This function parses color string into Color object
  * @param c - mutable reference to resulting color
- * @param word - C-string to convert
+ * @param word - string to convert
  * @return True - for success, False - if something goes wrong
  */
 bool parse_color(Color &c, const string &word) {
-    if(std::regex_match(word, COLOR_HEX)) {
+    if(regex_match(word, COLOR_HEX)) {
         //Matches hex format specification, treat as alpha packed integer
         uint32_t val;
 
@@ -114,6 +115,7 @@ bool parse_color(Color &c, const string &word) {
         switch (word.length()) {
             //12-bit RGB
             case 3: {
+				//each hex character stores 4 bits
                 c = Color(((val >> 8) & 0xF) * 16, ((val >> 4) & 0xF) * 16, (val & 0xF) * 16, 255);
                 return true;
             }
@@ -129,7 +131,7 @@ bool parse_color(Color &c, const string &word) {
         }
     }
 
-    if(std::regex_match(word, COLOR_DEC)) {
+    if(regex_match(word, COLOR_DEC)) {
         //decimal with commas
         int R, G, B, A;
         if(sscanf(word.c_str(), "%d,%d,%d,%d", &R, &G, &B, &A) != 4) return false;
@@ -141,6 +143,7 @@ bool parse_color(Color &c, const string &word) {
     return false;
 }
 
+//Simple average of each channel
 tuple<Color, ColorHSL> compute_mix(const vector<Color> &colors) {
     unsigned int R = 0, G = 0, B = 0, A = 0;
 
@@ -161,6 +164,7 @@ tuple<Color, ColorHSL> compute_mix(const vector<Color> &colors) {
     return {avgRgb, avgRgb};
 }
 
+//Calculates average of all channels, then sets resulting color's saturation to the average of saturations of all input colors
 tuple<Color, ColorHSL> compute_mix_saturate(const vector<Color> &colors) {
     auto avgRgb = get<0>(compute_mix(colors));
 
@@ -173,6 +177,7 @@ tuple<Color, ColorHSL> compute_mix_saturate(const vector<Color> &colors) {
     return {result, result};
 }
 
+//Minimal value of each channel
 tuple<Color, ColorHSL> compute_lowest(const vector<Color> &colors) {
     uint8_t r = 255, g = 255, b = 255, a = 255;
 
@@ -186,6 +191,7 @@ tuple<Color, ColorHSL> compute_lowest(const vector<Color> &colors) {
     return {Color(r,g,b,a), Color(r,g,b,a)};
 }
 
+//Maximal value of each channel
 tuple<Color, ColorHSL> compute_highest(const vector<Color> &colors) {
     uint8_t r = 0, g = 0, b = 0, a = 0;
 
@@ -203,8 +209,8 @@ int main(int argn, char *argc[]) {
     vector<Color> colors;
     Modes mode = MIX;
 
-    //parse input arguments
-    bool lookaheadForMode = false;
+    //Parse input arguments
+    bool lookaheadForMode = false; //true if last part was either "-m" or "--mode"
     for(int i = 1; i < argn; i++) {
         const string param(argc[i]);
 
@@ -215,8 +221,9 @@ int main(int argn, char *argc[]) {
             else if (param == "mix-saturate") mode = MIX_SAT;
             else cerr << "Unrecognized mode: \"" << param << "\"" << endl;
             lookaheadForMode = false;
-        }else if(param == "-m" || param == "--mode") lookaheadForMode = true;
-        else {
+        } else if(param == "-m" || param == "--mode") { 
+			lookaheadForMode = true;
+        } else {
             Color c;
             if(parse_color(c, param)) colors.push_back(c);
             else panic("Unrecognized value: \"" + param + "\"");
@@ -244,17 +251,19 @@ int main(int argn, char *argc[]) {
     Color finalColor;
     ColorHSL finalColorHSL;
 
-    if(mode == Modes::MIX) tie(finalColor, finalColorHSL) = compute_mix(colors);
-    else if(mode == Modes::MIX_SAT) tie(finalColor, finalColorHSL) = compute_mix_saturate(colors);
-    else if(mode == Modes::LOWEST) tie(finalColor, finalColorHSL) = compute_lowest(colors);
-    else tie(finalColor, finalColorHSL) = compute_highest(colors); //Mode::HIGHEST
+	switch(mode) {
+		case MIX: { tie(finalColor, finalColorHSL) = compute_mix(colors); break; }
+		case MIX_SAT: { tie(finalColor, finalColorHSL) = compute_mix_saturate(colors); break; }
+		case LOWEST: { tie(finalColor, finalColorHSL) = compute_lowest(colors); break; }
+		case HIGHEST: { tie(finalColor, finalColorHSL) = compute_highest(colors); break; }
+	}
 
     printf("RED: %d\nGREEN: %d\nBLUE: %d\nALPHA: %d\nHEX: #%x\nHUE: %.2f\nSATURATION: %.2f\nLIGHTNESS: %.2f\n",
            finalColor.red,
            finalColor.green,
            finalColor.blue,
            finalColor.alpha,
-           *(uint32_t*)(void*)&finalColor,
+           *reinterpret_cast<uint32_t*>(&finalColor), //thanks to careful channel order, simply reinterpreting bytes is sufficient to create packed binary representation of the color 
            finalColorHSL.hue,
            finalColorHSL.sat,
            finalColorHSL.light
